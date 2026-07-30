@@ -1,0 +1,7 @@
+How Your Project Relates to NLP & Sentiment Analysis
+It's a Text Classification problem — You're taking raw Reddit posts (plain text written by real users) and classifying them into categories like depression, anxiety, neutral, or crisis. That's core NLP.
+Sentiment Analysis is a subset of what you're doing — Standard sentiment analysis just says positive / negative / neutral. Your project goes deeper — it's emotion & mental health state detection, which is a more advanced and meaningful version of sentiment analysis.
+NLP techniques you'll use — Tokenization, stopword removal, text cleaning, and word embeddings (via DistilBERT) — all standard NLP preprocessing steps applied to mental health text data.
+Why DistilBERT fits here — BERT-based models are trained on massive text corpora and understand context, tone, and meaning in sentences — which is exactly what you need when someone writes "I can't get out of bed anymore" vs "I feel a little sad today". Basic sentiment tools can't tell the difference. BERT can.
+
+Bottom line: Sentiment analysis is the foundation. Your project builds on top of it to solve a real-world, high-impact problem — detecting mental health conditions from how people express themselves in text.
