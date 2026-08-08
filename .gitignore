@@ -1,0 +1,11 @@
+# Python virtual environments
+venv/
+*/venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Large model weights that exceed GitHub's 100MB file limit
+Mental_Health_Classifier/models/distilbert/model.safetensors
