@@ -1,0 +1,7 @@
+streamlit
+joblib
+pandas
+torch
+transformers
+scikit-learn
+qrcode[pil]
