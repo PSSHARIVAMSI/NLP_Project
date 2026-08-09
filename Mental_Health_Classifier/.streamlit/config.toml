@@ -1,0 +1,13 @@
+[theme]
+# Pin the app to the "Sage Minimal" light palette that app.py's custom CSS
+# assumes. Without this, Streamlit auto-switches its native widgets (labels,
+# buttons, alerts, dataframes) to a dark palette when the visitor's OS/browser
+# prefers dark mode, while the custom CSS keeps forcing a light background —
+# that mismatch is what was producing invisible white-on-white / black-on-black
+# text. Pinning the theme here means every viewer sees the same, tested look.
+base = "light"
+primaryColor = "#6B8F71"
+backgroundColor = "#F7F8FA"
+secondaryBackgroundColor = "#EBF4ED"
+textColor = "#1A2035"
+font = "sans serif"

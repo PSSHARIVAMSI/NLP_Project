@@ -12,7 +12,6 @@ Run:
     streamlit run app.py
 """
 
-import io
 import re
 import time
 from pathlib import Path
@@ -49,6 +48,28 @@ SAGE_CSS = """
 
 /* App background */
 .stApp { background-color: var(--offwhite); }
+
+/* ── Theme safety-net ───────────────────────────────────────────────────────
+   The app is pinned to a light theme via .streamlit/config.toml, but this
+   backs that up: any plain Streamlit-rendered text (labels, markdown blocks,
+   checkboxes, inputs) gets an explicit readable color instead of silently
+   inheriting whatever the visitor's browser theme happens to be. Elements
+   with their own intentional color (hero, footer, crisis banner, cards,
+   table) keep their more specific rules further down this stylesheet, which
+   win over these lower-specificity, same-order-position rules. */
+[data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] span,
+[data-testid="stWidgetLabel"] p,
+[data-testid="stExpander"] summary,
+.stCheckbox label p,
+.stTextInput label p,
+.stTextArea label p,
+.stDataFrame,
+label {
+    color: var(--text);
+}
 
 /* Top header bar */
 header[data-testid="stHeader"] {
@@ -297,11 +318,13 @@ header[data-testid="stHeader"] {
 st.markdown(SAGE_CSS, unsafe_allow_html=True)
 
 # ── Config ─────────────────────────────────────────────────────────────────
+# NOTE: all non-DistilBERT artifacts are saved flat under models/ (not in
+# baseline/rnn/lstm subfolders) by Modelling.ipynb — paths below match that.
 PROJECT_ROOT  = Path(__file__).resolve().parent
 MODELS_DIR    = PROJECT_ROOT / "models"
-BASELINE_DIR  = MODELS_DIR / "baseline"
-RNN_DIR       = MODELS_DIR / "rnn"
-LSTM_DIR      = MODELS_DIR / "lstm"
+BASELINE_DIR  = MODELS_DIR
+RNN_DIR       = MODELS_DIR
+LSTM_DIR      = MODELS_DIR
 BERT_DIR      = MODELS_DIR / "distilbert"
 
 LABELS   = ["depression", "anxiety", "crisis", "loneliness", "neutral"]
@@ -345,35 +368,41 @@ def tokenize(text: str):
 
 
 # ── Model definitions ──────────────────────────────────────────────────────
+# NOTE: attribute names (self.emb / self.drop) must match the names used in
+# Modelling.ipynb's RNNClassifier/LSTMClassifier — that's what the saved
+# state_dict keys (emb.weight, drop.*, ...) are keyed on. A previous version
+# of this file used self.embedding/self.dropout here, which made
+# load_state_dict() fail with "Missing key(s) ... Unexpected key(s)" for
+# every RNN/BiLSTM prediction.
 class RNNClassifier(nn.Module):
     def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes, pad_idx=0):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
-        self.rnn       = nn.RNN(embed_dim, hidden_dim, batch_first=True)
-        self.dropout   = nn.Dropout(0.3)
-        self.fc        = nn.Linear(hidden_dim, num_classes)
+        self.emb  = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
+        self.rnn  = nn.RNN(embed_dim, hidden_dim, batch_first=True)
+        self.drop = nn.Dropout(0.3)
+        self.fc   = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x, lengths):
-        embedded = self.embedding(x)
+        embedded = self.emb(x)
         packed   = nn.utils.rnn.pack_padded_sequence(embedded, lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, hidden = self.rnn(packed)
-        return self.fc(self.dropout(hidden[-1]))
+        return self.fc(self.drop(hidden[-1]))
 
 
 class LSTMClassifier(nn.Module):
     def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes, pad_idx=0):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
-        self.lstm      = nn.LSTM(embed_dim, hidden_dim, batch_first=True, bidirectional=True)
-        self.dropout   = nn.Dropout(0.3)
-        self.fc        = nn.Linear(hidden_dim * 2, num_classes)
+        self.emb  = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
+        self.lstm = nn.LSTM(embed_dim, hidden_dim, batch_first=True, bidirectional=True)
+        self.drop = nn.Dropout(0.3)
+        self.fc   = nn.Linear(hidden_dim * 2, num_classes)
 
     def forward(self, x, lengths):
-        embedded = self.embedding(x)
+        embedded = self.emb(x)
         packed   = nn.utils.rnn.pack_padded_sequence(embedded, lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, (hidden, _) = self.lstm(packed)
         combined = torch.cat([hidden[-2], hidden[-1]], dim=1)
-        return self.fc(self.dropout(combined))
+        return self.fc(self.drop(combined))
 
 
 def encode(text: str, vocab: dict, max_len: int = MAX_LEN_WORDS):
@@ -388,13 +417,13 @@ def encode(text: str, vocab: dict, max_len: int = MAX_LEN_WORDS):
 @st.cache_resource(show_spinner="Loading TF-IDF …")
 def load_tfidf():
     vectorizer = joblib.load(BASELINE_DIR / "tfidf_vectorizer.joblib")
-    clf        = joblib.load(BASELINE_DIR / "sgd_classifier.joblib")
+    clf        = joblib.load(BASELINE_DIR / "tfidf_classifier.joblib")
     return vectorizer, clf
 
 
 @st.cache_resource(show_spinner="Loading RNN …")
 def load_rnn():
-    vocab = joblib.load(RNN_DIR / "vocab.joblib")
+    vocab = joblib.load(RNN_DIR / "rnn_vocab.joblib")
     model = RNNClassifier(len(vocab), EMBED_DIM, HIDDEN_DIM, len(LABELS))
     model.load_state_dict(torch.load(RNN_DIR / "rnn_state_dict.pt", map_location=DEVICE))
     return vocab, model.to(DEVICE).eval()
@@ -402,7 +431,7 @@ def load_rnn():
 
 @st.cache_resource(show_spinner="Loading BiLSTM …")
 def load_lstm():
-    vocab = joblib.load(LSTM_DIR / "vocab.joblib")
+    vocab = joblib.load(LSTM_DIR / "lstm_vocab.joblib")
     model = LSTMClassifier(len(vocab), EMBED_DIM, HIDDEN_DIM, len(LABELS))
     model.load_state_dict(torch.load(LSTM_DIR / "lstm_state_dict.pt", map_location=DEVICE))
     return vocab, model.to(DEVICE).eval()
@@ -424,13 +453,18 @@ def load_zeroshot():
 
 def available_models() -> dict:
     avail = {}
-    if (BASELINE_DIR / "tfidf_vectorizer.joblib").exists():
+    if (BASELINE_DIR / "tfidf_vectorizer.joblib").exists() and (BASELINE_DIR / "tfidf_classifier.joblib").exists():
         avail["TF-IDF"] = "tfidf"
-    if (RNN_DIR / "rnn_state_dict.pt").exists():
+    if (RNN_DIR / "rnn_state_dict.pt").exists() and (RNN_DIR / "rnn_vocab.joblib").exists():
         avail["RNN"] = "rnn"
-    if (LSTM_DIR / "lstm_state_dict.pt").exists():
+    if (LSTM_DIR / "lstm_state_dict.pt").exists() and (LSTM_DIR / "lstm_vocab.joblib").exists():
         avail["BiLSTM"] = "lstm"
-    if BERT_DIR.exists() and any(BERT_DIR.iterdir()):
+    # Require the actual weight file, not just the directory — config.json and
+    # tokenizer files can exist (e.g. checked into git) without the ~255MB
+    # model.safetensors/pytorch_model.bin being deployed alongside them. This
+    # is what previously made DistilBERT look "available" and then crash with
+    # OSError as soon as load_bert() actually tried to read the weights.
+    if (BERT_DIR / "model.safetensors").exists() or (BERT_DIR / "pytorch_model.bin").exists():
         avail["DistilBERT"] = "bert"
     avail["Zero-Shot (BART)"] = "zeroshot"
     return avail
@@ -438,69 +472,92 @@ def available_models() -> dict:
 
 # ── Prediction engine ──────────────────────────────────────────────────────
 def predict_all(text: str, models_to_run: dict) -> pd.DataFrame:
+    """Run every requested model and return one row per model.
+
+    Each model runs in its own try/except: if one model's artifact is
+    missing, corrupted, or otherwise fails to load/infer, that model is
+    skipped (with a warning) instead of taking down the whole page — this
+    matters most on the Live Audience Wall, which calls this in a loop over
+    many rows with no other error handling around it.
+    """
     cleaned = clean_text(text)
     rows    = []
 
     if "tfidf" in models_to_run.values():
-        vec, clf = load_tfidf()
-        t0    = time.time()
-        proba = clf.predict_proba(vec.transform([cleaned]))[0]
-        lat   = (time.time() - t0) * 1000
-        rows.append({"model": "TF-IDF",
-                     "prediction": clf.classes_[proba.argmax()],
-                     "confidence": float(proba.max()),
-                     "latency_ms": lat})
+        try:
+            vec, clf = load_tfidf()
+            t0    = time.time()
+            proba = clf.predict_proba(vec.transform([cleaned]))[0]
+            lat   = (time.time() - t0) * 1000
+            rows.append({"model": "TF-IDF",
+                         "prediction": clf.classes_[proba.argmax()],
+                         "confidence": float(proba.max()),
+                         "latency_ms": lat})
+        except Exception as e:
+            st.warning(f"TF-IDF prediction failed and was skipped: {e}")
 
     if "rnn" in models_to_run.values():
-        vocab, model = load_rnn()
-        ids, length  = encode(cleaned, vocab)
-        t0 = time.time()
-        with torch.no_grad():
-            logits = model(torch.tensor([ids]).to(DEVICE), torch.tensor([length]))
-            proba  = torch.softmax(logits, dim=-1)[0].cpu().numpy()
-        lat = (time.time() - t0) * 1000
-        rows.append({"model": "RNN",
-                     "prediction": ID2LABEL[int(proba.argmax())],
-                     "confidence": float(proba.max()),
-                     "latency_ms": lat})
+        try:
+            vocab, model = load_rnn()
+            ids, length  = encode(cleaned, vocab)
+            t0 = time.time()
+            with torch.no_grad():
+                logits = model(torch.tensor([ids]).to(DEVICE), torch.tensor([length]))
+                proba  = torch.softmax(logits, dim=-1)[0].cpu().numpy()
+            lat = (time.time() - t0) * 1000
+            rows.append({"model": "RNN",
+                         "prediction": ID2LABEL[int(proba.argmax())],
+                         "confidence": float(proba.max()),
+                         "latency_ms": lat})
+        except Exception as e:
+            st.warning(f"RNN prediction failed and was skipped: {e}")
 
     if "lstm" in models_to_run.values():
-        vocab, model = load_lstm()
-        ids, length  = encode(cleaned, vocab)
-        t0 = time.time()
-        with torch.no_grad():
-            logits = model(torch.tensor([ids]).to(DEVICE), torch.tensor([length]))
-            proba  = torch.softmax(logits, dim=-1)[0].cpu().numpy()
-        lat = (time.time() - t0) * 1000
-        rows.append({"model": "BiLSTM",
-                     "prediction": ID2LABEL[int(proba.argmax())],
-                     "confidence": float(proba.max()),
-                     "latency_ms": lat})
+        try:
+            vocab, model = load_lstm()
+            ids, length  = encode(cleaned, vocab)
+            t0 = time.time()
+            with torch.no_grad():
+                logits = model(torch.tensor([ids]).to(DEVICE), torch.tensor([length]))
+                proba  = torch.softmax(logits, dim=-1)[0].cpu().numpy()
+            lat = (time.time() - t0) * 1000
+            rows.append({"model": "BiLSTM",
+                         "prediction": ID2LABEL[int(proba.argmax())],
+                         "confidence": float(proba.max()),
+                         "latency_ms": lat})
+        except Exception as e:
+            st.warning(f"BiLSTM prediction failed and was skipped: {e}")
 
     if "bert" in models_to_run.values():
-        tokenizer, model = load_bert()
-        inputs = tokenizer(cleaned, truncation=True, max_length=BERT_MAX_LEN,
-                           return_tensors="pt").to(DEVICE)
-        t0 = time.time()
-        with torch.no_grad():
-            logits = model(**inputs).logits
-            proba  = torch.softmax(logits, dim=-1)[0].cpu().numpy()
-        lat = (time.time() - t0) * 1000
-        id2label = model.config.id2label
-        rows.append({"model": "DistilBERT",
-                     "prediction": id2label[int(proba.argmax())],
-                     "confidence": float(proba.max()),
-                     "latency_ms": lat})
+        try:
+            tokenizer, model = load_bert()
+            inputs = tokenizer(cleaned, truncation=True, max_length=BERT_MAX_LEN,
+                               return_tensors="pt").to(DEVICE)
+            t0 = time.time()
+            with torch.no_grad():
+                logits = model(**inputs).logits
+                proba  = torch.softmax(logits, dim=-1)[0].cpu().numpy()
+            lat = (time.time() - t0) * 1000
+            id2label = model.config.id2label
+            rows.append({"model": "DistilBERT",
+                         "prediction": id2label[int(proba.argmax())],
+                         "confidence": float(proba.max()),
+                         "latency_ms": lat})
+        except Exception as e:
+            st.warning(f"DistilBERT prediction failed and was skipped: {e}")
 
     if "zeroshot" in models_to_run.values():
-        zs = load_zeroshot()
-        t0 = time.time()
-        result = zs(cleaned[:512], candidate_labels=LABELS)
-        lat    = (time.time() - t0) * 1000
-        rows.append({"model": "Zero-Shot (BART)",
-                     "prediction": result["labels"][0],
-                     "confidence": float(result["scores"][0]),
-                     "latency_ms": lat})
+        try:
+            zs = load_zeroshot()
+            t0 = time.time()
+            result = zs(cleaned[:512], candidate_labels=LABELS)
+            lat    = (time.time() - t0) * 1000
+            rows.append({"model": "Zero-Shot (BART)",
+                         "prediction": result["labels"][0],
+                         "confidence": float(result["scores"][0]),
+                         "latency_ms": lat})
+        except Exception as e:
+            st.warning(f"Zero-Shot BART prediction failed and was skipped: {e}")
 
     return pd.DataFrame(rows)
 
@@ -578,7 +635,7 @@ missing_supervised = [m for m in ["TF-IDF", "RNN", "BiLSTM", "DistilBERT"] if m 
 if missing_supervised:
     st.info(
         f"**Models not yet trained (will be skipped):** {', '.join(missing_supervised)}  \n"
-        "Run every cell in `mental_health_classification.ipynb` to generate them."
+        "Run every cell in `Modelling.ipynb` to generate them."
     )
 
 # ── Tabs ───────────────────────────────────────────────────────────────────
@@ -624,7 +681,7 @@ with tab1:
             # Confidence bar chart
             st.markdown('<div class="section-head">Confidence comparison</div>', unsafe_allow_html=True)
             chart_df = results.set_index("model")[["confidence"]].rename(columns={"confidence": "Confidence"})
-            st.bar_chart(chart_df, height=200, use_container_width=True)
+            st.bar_chart(chart_df, height=200, width="stretch")
 
             # Latency row
             st.markdown('<div class="section-head">Inference latency</div>', unsafe_allow_html=True)
@@ -634,7 +691,7 @@ with tab1:
             st.dataframe(
                 lat_df.style.format({"Latency (ms)": "{:.1f}"}),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
             # Ensemble majority vote
@@ -648,29 +705,6 @@ with tab1:
 
     elif run_btn:
         st.warning("Please enter some text before classifying.")
-
-    st.divider()
-
-    # QR code section
-    st.markdown('<div class="section-head">📱 Share with an audience</div>', unsafe_allow_html=True)
-    st.markdown(
-        "Deploy this app to [Streamlit Community Cloud](https://streamlit.io/cloud) "
-        "and paste the URL below to generate a scannable QR code."
-    )
-    deployed_url = st.text_input(
-        "Deployed app URL",
-        placeholder="https://your-app.streamlit.app",
-        key="qr_url",
-    )
-    if deployed_url.strip():
-        try:
-            import qrcode
-            qr_img = qrcode.make(deployed_url.strip())
-            buf = io.BytesIO()
-            qr_img.save(buf, format="PNG")
-            st.image(buf.getvalue(), caption=deployed_url, width=200)
-        except ImportError:
-            st.info("Install `qrcode[pil]` to render a QR code, or use any online QR generator.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -790,7 +824,7 @@ with tab2:
         "Raw rows":         ["~470 K", "~280 K", "~310 K", "~340 K", "~150 K"],
         "Balanced sample":  ["20 K", "20 K", "20 K", "20 K", "20 K"],
     }
-    st.dataframe(pd.DataFrame(provenance_data), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(provenance_data), hide_index=True, width="stretch")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -846,7 +880,7 @@ with tab3:
                             rows.append(row_out)
                         wall_df = pd.DataFrame(rows)
 
-                    st.dataframe(wall_df, hide_index=True, use_container_width=True)
+                    st.dataframe(wall_df, hide_index=True, width="stretch")
 
                     model_cols = [c for c in wall_df.columns if c != "text"]
                     if wall_df[model_cols].apply(lambda col: col.str.contains("crisis")).any().any():
@@ -864,7 +898,7 @@ st.markdown(
         about anyone's mental health or safety. If this demo surfaces a real disclosure of crisis or self-harm risk
         from an audience member, pause the demo and direct them to a crisis line —
         <strong>988 Suicide &amp; Crisis Lifeline</strong> (call or text 988, US) · or local emergency services.<br><br>
-        Built by <strong>Siva Mani</strong> · George Mason University · Data Analytics Capstone 2026 ·
+        Built by <strong>Siva Mani</strong> ·
         Models: TF-IDF · RNN · BiLSTM · DistilBERT · Zero-Shot BART-large-mnli ·
         Data: Kaggle Reddit Mental Health Dataset
     </div>
