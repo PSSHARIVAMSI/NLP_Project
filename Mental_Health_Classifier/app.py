@@ -75,6 +75,14 @@ label {
 header[data-testid="stHeader"] {
     background-color: var(--navy) !important;
 }
+/* The header's own toolbar (hamburger menu, Deploy button) inherits the
+   pinned theme's textColor (navy) via currentColor — on a navy header bar
+   that made every icon/label invisible (navy-on-navy). Force it white. */
+header[data-testid="stHeader"] * {
+    color: #FFFFFF !important;
+    fill: #FFFFFF !important;
+    stroke: #FFFFFF !important;
+}
 
 /* Hero banner */
 .hero {
@@ -84,12 +92,21 @@ header[data-testid="stHeader"] {
     margin-bottom: 1.6rem;
 }
 .hero h1 {
-    color: #FFFFFF;
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
     font-size: 2rem;
     font-weight: 700;
     margin: 0 0 0.3rem;
     letter-spacing: -0.02em;
     font-family: 'Calibri', 'Segoe UI', sans-serif;
+}
+/* Streamlit auto-adds a permalink icon to any heading; force it visible
+   against the dark hero background too instead of inheriting the pinned
+   (navy) theme color. */
+.hero h1 [data-testid="stHeaderActionElements"] svg {
+    stroke: #FFFFFF !important;
+    opacity: 0.7;
 }
 .hero p {
     color: #A8B8C8;
