@@ -651,8 +651,8 @@ avail = available_models()
 missing_supervised = [m for m in ["TF-IDF", "RNN", "BiLSTM", "DistilBERT"] if m not in avail]
 if missing_supervised:
     st.info(
-        f"**Models not yet trained (will be skipped):** {', '.join(missing_supervised)}  \n"
-        "Run every cell in `Modelling.ipynb` to generate them."
+        # f"**Models not yet trained (will be skipped):** {', '.join(missing_supervised)}  \n"
+        # "Run every cell in `Modelling.ipynb` to generate them."
     )
 
 # ── Tabs ───────────────────────────────────────────────────────────────────
